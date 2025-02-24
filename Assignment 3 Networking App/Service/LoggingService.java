@@ -5,86 +5,93 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 
-public class LoggingService {
-    private static String logFile;
-    private static int port;
-    private static final int RATE_LIMIT = 10;
+public class LoggingService{
+    private static final String LOG_FILE;
+    private static final int PORT;
+    private static final int RATE_LIMIT;
     private static final ConcurrentHashMap<String, AtomicInteger> IP_COUNT = new ConcurrentHashMap<>();
 
-    public static void main(String[] args) {
-        if (args.length < 2) {
-            System.out.println("Usage: java LoggingService <port> <log_file>");
-            return;
-        }
-        try {
-            port = Integer.parseInt(args[0]);
-            logFile = args[1];
-            ServerSocket server = new ServerSocket(port);
-            System.out.println("Server started on port " + port);
-
-            while (true) {
-                Socket client = server.accept();
+    public static void main(String[] args){
+        try{
+            LoadConfig();
+            ServerSocket server = new ServerSocket(PORT);
+            System.out.println("Server started on port " + PORT);
+            while(true){
+              Socket client = server.accept();
                 new Thread(new ClientHandler(client)).start();
             }
-        } catch (IOException e) {
+        } catch(IOException e){
             e.printStackTrace();
+            exit();
         }
     }
-
-    // Log messages with timestamp
-    public static synchronized void logMessage(String message) {
-        try (FileWriter writer = new FileWriter(logFile, true);
-             BufferedWriter bw = new BufferedWriter(writer);
-             PrintWriter out = new PrintWriter(bw)) {
-            String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
-            out.println("[" + timestamp + "] " + message);
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
-    }
-
-    // Rate limit based on IP
-    public static boolean isRateLimited(String ip) {
-        IP_COUNT.putIfAbsent(ip, new AtomicInteger(0));
-        if (IP_COUNT.get(ip).incrementAndGet() > RATE_LIMIT) {
-            return true;
-        }
-        return false;
+}
+private static void LoadConfig()
+{
+    try(InputStream input = new FileInputStream("config.properties")){
+        Properties prop = new Properties();
+        prop.load(input);
+        LOG_FILE = prop.getProperty("LOG_FILE");
+        PORT = Integer.parseInt(prop.getProperty("PORT"));
+        RATE_LIMIT = Integer.parseInt(prop.getProperty("RATE_LIMIT"));
+    } catch(IOException e){
+        e.printStackTrace();
     }
 }
 
-class ClientHandler implements Runnable {
-    private Socket client;
-
-    public ClientHandler(Socket client) {
-        this.client = client;
+private static class ClientHandler {
+    private final Socket clientSocket;
+    public ClientHandler(Socket clientSocket){
+        this.clientSocket = clientSocket;
     }
-
     @Override
-    public void run() {
-        try (BufferedReader in = new BufferedReader(new InputStreamReader(client.getInputStream()));
-             PrintWriter out = new PrintWriter(client.getOutputStream(), true)) {
-
-            String ip = client.getInetAddress().getHostAddress();
-            if (LoggingService.isRateLimited(ip)) {
-                out.println("Error: Too many requests. Try again later.");
-                client.close();
+    public void run(){
+        try(BufferedReader in = new BufferedReader(new InputStreamReader(clientSocket.getInputStream()));
+            BufferedWriter out = new BufferedWriter(new OutputStreamWriter(clientSocket.getOutputStream())){
+            String ip = clientSocket.getInetAddress().getHostAddress();
+            if(!IP_COUNT.containsKey(ip)){
+                IP_COUNT.put(ip, new AtomicInteger(0));
+            }
+            int count = IP_COUNT.get(ip).incrementAndGet();
+            if(count > RATE_LIMIT){
+                out.write("Rate limit exceeded\n");
+                out.flush();
                 return;
             }
-
-            String logMessage;
-            while ((logMessage = in.readLine()) != null) {
-                LoggingService.logMessage("Client (" + ip + "): " + logMessage);
-                out.println("Logged: " + logMessage);
+            String message = in.readLine();
+            DateTimeFormatter dtf = DateTimeFormatter.ofPattern("yyyy/MM/dd HH:mm:ss");
+            LocalDateTime now = LocalDateTime.now();
+            String logMessage = dtf.format(now) + " " + ip + " " + message + "\n";
+            System.out.print(logMessage);
+            try(BufferedWriter log = new BufferedWriter(new FileWriter(LOG_FILE, true))){
+                log.write(logMessage);
             }
-        } catch (IOException e) {
+            out.write("Message logged\n");
+            out.flush();
+        } catch(IOException e){
             e.printStackTrace();
-        } finally {
-            try {
-                client.close();
-            } catch (IOException e) {
-                e.printStackTrace();
-            }
-        }
+    }
+    
+}
+private static void logMessage(String message){
+    DateTimeFormatter dtf = DateTimeFormatter.ofPattern("yyyy/MM/dd HH:mm:ss");
+    LocalDateTime now = LocalDateTime.now();
+    String logMessage = dtf.format(now) + " " + message + "\n";
+    System.out.print(logMessage);
+    try(BufferedWriter log = new BufferedWriter(new FileWriter(LOG_FILE, true))){
+        log.write(logMessage);
+    } catch(IOException e){
+        e.printStackTrace();
     }
 }
+// Set up logging//
+//The service will store logging information in plain text files.//
+//the service will not need UI//
+//You must use a config file or command line arguments – no-hard coded paths or addresses.//
+//You will have to research what features a good logging service should support.
+// You will create a client tool to test your service.//
+//o This must be developed in a language different than the logging service or a penalty will apply.//
+//o This tool should allow for manual testing of your service.//
+//o This tool should be able to run a thorough set of automated tests on your logging service.//
+// You must adhere to SET standards//
+// Demonstration is REQUIRED or you will not receive a grade//
